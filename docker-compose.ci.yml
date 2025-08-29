@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: dr-mongo
+    ports:
+      - "27018:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  dr:
+    build: .
+    container_name: dr-app
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      # Identità DR
+      DR_ID: "dr-local"
+      DR_TOKEN: "local-token"
+      # DB esterno (il container mongo nella stessa rete)
+      MONGODB_URI: "mongodb://mongo:27017/digital_twin_db"
+      # MQTT esterno (pubblico)
+      MQTT_BROKER_HOST: "test.mosquitto.org"
+      MQTT_BROKER_PORT: "1883"
+      MQTT_USERNAME: ""       # opzionali
+      MQTT_PASSWORD: ""       # opzionali
+      MQTT_BASE_TOPIC: "iot/dr-local"
+      # (opzionale) persistenza file config interna al container
+      DR_PERSIST_DIR: "/data"
+    ports:
+      - "8000:8000"
+    volumes:
+      - drdata:/data
+    # utile quando sviluppi: riavvio automatico
+    restart: unless-stopped
+
+volumes:
+  drdata:

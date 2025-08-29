@@ -1,0 +1,1 @@
+{"host": "test.mosquitto.org", "port": 1883, "base_topic": "iot/dr-001", "username": "", "password": ""}
