@@ -193,15 +193,22 @@ def test_admin_db_and_mqtt_protected_and_persisted():
     r = requests.get(f"{BASE_URL}/admin/db", headers={"X-DR-TOKEN": DR_TOKEN}, timeout=5)
     assert r.ok and r.json()["uri"].endswith("/digital_twin_db_alt")
 
-    # PUT admin mqtt (host stays same in CI)
+    # PUT admin mqtt usando i parametri della pipeline (broker pubblico)
+    host_from_env = os.environ.get("MQTT_HOST", "test.mosquitto.org")
+    port_from_env = int(os.environ.get("MQTT_PORT", "1883"))
+    new_base = f"{MQTT_BASE}-alt"
     r = requests.put(
         f"{BASE_URL}/admin/mqtt",
         headers={"Content-Type": "application/json", "X-DR-TOKEN": DR_TOKEN},
-        data=json.dumps({"host": "mosquitto", "port": 1883}),
-        timeout=5,
+        data=json.dumps({"host": host_from_env, "port": port_from_env, "base_topic": new_base}),
+        timeout=15,  # un po' più largo per evitare flakiness in CI
     )
     assert r.ok and r.json()["status"] == "ok"
 
-    # GET admin mqtt reflects change
+    # GET e verifica persistenza
     r = requests.get(f"{BASE_URL}/admin/mqtt", headers={"X-DR-TOKEN": DR_TOKEN}, timeout=5)
-    assert r.ok and r.json()["host"] in ("mosquitto", "localhost")
+    assert r.ok
+    cfg = r.json()
+    assert cfg["host"] == host_from_env
+    assert int(cfg["port"]) == port_from_env
+    assert cfg.get("base_topic") == new_base
