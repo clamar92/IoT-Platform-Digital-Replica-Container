@@ -76,44 +76,79 @@ MQTT_OK = _mqtt_reachable(MQTT_HOST, MQTT_PORT)
 
 @pytest.mark.xfail(not MQTT_OK, reason="Public MQTT broker unreachable/flaky")
 def test_command_mqtt_publish():
-    # Subscribe to command topic to verify publish
+    import threading
+
     received = {}
+    subscribed = threading.Event()
+    connected = threading.Event()
+
+    cmd_topic = f"{MQTT_BASE}/{DEVICE_ID}/cmd"
+
+    def on_connect(client, userdata, flags, rc, properties=None):
+        # 0 = Connection Accepted
+        if rc == 0:
+            connected.set()
+
+    def on_subscribe(client, userdata, mid, granted_qos, properties=None):
+        subscribed.set()
 
     def on_msg(client, userdata, msg):
         received["topic"] = msg.topic
-        received["payload"] = msg.payload.decode()
+        try:
+            received["payload"] = msg.payload.decode()
+        except Exception:
+            received["payload"] = msg.payload
 
-    cmd_topic = f"{MQTT_BASE}/{DEVICE_ID}/cmd"
     sub = mqtt.Client()
+    sub.on_connect = on_connect
+    sub.on_subscribe = on_subscribe
     sub.on_message = on_msg
+
+    # Connessione subscriber
     sub.connect(MQTT_HOST, MQTT_PORT, 60)
     sub.loop_start()
-    sub.subscribe(cmd_topic, qos=1)
 
-    # send command
-    body = {"cmd": "set_threshold", "params": {"temp": 26}}
-    r = requests.post(
-        f"{BASE_URL}/devices/{DEVICE_ID}/commands",
-        headers={"Content-Type": "application/json", "X-DR-TOKEN": DR_TOKEN},
-        data=json.dumps(body),
-        timeout=5,
-    )
-    assert r.ok and r.json()["status"] == "ok"
+    # Attendi CONNECT
+    assert connected.wait(timeout=10), "MQTT subscriber non connesso al broker"
 
-    # wait for message
-    for _ in range(20):
+    # Subscribe e attendi SUBACK
+    res, mid = sub.subscribe(cmd_topic, qos=1)
+    assert res == mqtt.MQTT_ERR_SUCCESS
+    assert subscribed.wait(timeout=10), "SUBACK non ricevuta: subscribe non attiva"
+
+    # Funzione helper: invia comando via HTTP
+    def send_command():
+        body = {"cmd": "set_threshold", "params": {"temp": 26}}
+        r = requests.post(
+            f"{BASE_URL}/devices/{DEVICE_ID}/commands",
+            headers={"Content-Type": "application/json", "X-DR-TOKEN": DR_TOKEN},
+            data=json.dumps(body),
+            timeout=8,
+        )
+        assert r.ok and r.json()["status"] == "ok"
+
+    # Invia il comando una prima volta
+    send_command()
+
+    # Attendi messaggio fino a 10s, altrimenti ritenta 2 volte
+    max_waits = 20  # 20 * 0.5s = 10s
+    for i in range(max_waits + 10):  # esteso a ~15s
         if "payload" in received:
             pl = json.loads(received["payload"])
             assert pl["cmd"] == "set_threshold"
             assert pl["params"]["temp"] == 26
             assert received["topic"] == cmd_topic
             break
+        # dopo 10s, ritenta 2 volte l'invio del comando per sicurezza
+        if i in (max_waits, max_waits + 5):
+            send_command()
         time.sleep(0.5)
     else:
         raise AssertionError("Comando MQTT non ricevuto dal subscriber di test")
 
     sub.loop_stop()
     sub.disconnect()
+
 
 @pytest.mark.xfail(not MQTT_OK, reason="Public MQTT broker unreachable/flaky")
 def test_mqtt_telemetry_to_mongo():
