@@ -2,3 +2,4 @@ Flask>=2.3
 pymongo>=4.7
 paho-mqtt>=1.6
 PyYAML>=6.0
+pytest
